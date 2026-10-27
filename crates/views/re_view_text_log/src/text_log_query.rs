@@ -109,37 +109,51 @@ pub struct TextLogRowLevels {
     /// Number of text instances to which the level batch applies (there can in theory be multiple texts on a single row).
     pub num_instances: usize,
 
+    /// The texts, only read when requested since text filters are their only use here.
+    pub bodies: Option<Vec<ArrowString>>,
+
     /// Unclamped level batch; absent or empty batches provide no level.
     pub levels: Option<Vec<ArrowString>>,
 }
 
-/// Joins text rows with the latest applicable level batch.
+/// Joins text rows with the latest applicable level batch, and with their texts if `with_bodies`.
 pub fn text_levels<'a>(
     timeline: TimelineName,
     texts: &'a ChunksWithComponent<'_>,
     levels: &'a ChunksWithComponent<'_>,
+    with_bodies: bool,
 ) -> impl Iterator<Item = TextLogRowLevels> + 'a {
     range_zip_1x1(
         texts
             .iter()
             .filter(|chunk| !chunk.chunk.is_static())
             .flat_map(move |chunk| {
-                std::iter::zip(
+                let bodies = if with_bodies {
+                    itertools::Either::Left(chunk.iter_slices::<String>().map(Some))
+                } else {
+                    itertools::Either::Right(std::iter::repeat(None))
+                };
+                izip!(
                     chunk.iter_component_indices(timeline),
                     chunk
                         .chunk
                         .iter_component_offsets(chunk.component)
                         .map(|span| span.len),
+                    bodies,
                 )
+                .map(|(index, num_instances, bodies)| (index, (num_instances, bodies)))
             }),
         levels.slice::<String>(timeline),
     )
-    .map(|((time, row_id), num_instances, levels)| TextLogRowLevels {
-        time,
-        row_id,
-        num_instances,
-        levels,
-    })
+    .map(
+        |((time, row_id), (num_instances, bodies), levels)| TextLogRowLevels {
+            time,
+            row_id,
+            num_instances,
+            bodies,
+            levels,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -152,6 +166,7 @@ mod tests {
     use re_sdk_types::archetypes::TextLog;
     use re_sdk_types::components::TextLogLevel;
 
+    use crate::text_filter::TextFilters;
     use crate::text_log_index_cache::TextLogIndex;
 
     use super::*;
@@ -169,6 +184,46 @@ mod tests {
     /// Population must match cached row IDs and instance indices, not chunk-local positions.
     /// Equal timestamps require row-ID matching, and a window starting mid-batch requires
     /// preserving the requested instance index rather than restarting at the first body.
+    #[test]
+    fn text_filters_apply_while_indexing() {
+        let timeline = Timeline::log_tick();
+        let chunk = Chunk::builder("logs")
+            .with_archetype_auto_row([(timeline, 1)], &TextLog::new("request failed"))
+            .with_archetype_auto_row([(timeline, 2)], &TextLog::new("worker failed"))
+            .with_archetype_auto_row([(timeline, 3)], &TextLog::new("request ok"))
+            .build()
+            .unwrap();
+        let chunks = [chunk];
+        let body_filter = |operator, query| {
+            re_dataframe_ui::ColumnFilter::new(
+                crate::text_filter::column_field(
+                    re_sdk_types::blueprint::encodings::TextLogColumnKind::Body,
+                ),
+                re_dataframe_ui::StringFilter::new(operator, query),
+            )
+            .to_sql()
+            .unwrap()
+        };
+        let filters = TextFilters::from_sql(&[
+            body_filter(re_dataframe_ui::StringOperator::Contains, "failed"),
+            body_filter(re_dataframe_ui::StringOperator::DoesNotContain, "worker"),
+        ]);
+
+        let mut index = TextLogIndex::default();
+        index.append(
+            0,
+            *timeline.name(),
+            None,
+            &filters,
+            "/logs",
+            &components(&chunks, TextLog::descriptor_text().component),
+            &components(&chunks, TextLog::descriptor_level().component),
+            &mut BTreeSet::new(),
+        );
+        let times: Vec<_> = index.rows.iter().map(|row| row.time.as_i64()).collect();
+        assert_eq!(times, [1]);
+    }
+
     #[test]
     fn populate_matches_requested_row_and_instance_ids() {
         let timeline = Timeline::log_tick();
@@ -192,6 +247,8 @@ mod tests {
             0,
             *timeline.name(),
             None,
+            &TextFilters::default(),
+            "",
             &components(&chunks, TextLog::descriptor_text().component),
             &components(&chunks, TextLog::descriptor_level().component),
             &mut BTreeSet::new(),
@@ -296,6 +353,8 @@ mod tests {
             0,
             TimelineName::log_tick(),
             filter,
+            &TextFilters::default(),
+            "",
             &components[0],
             &components[1],
             &mut levels,

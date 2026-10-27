@@ -2,6 +2,7 @@
 //!
 //! A View that shows `TextLog` entries in a table and scrolls with the active time.
 
+mod text_filter;
 mod text_log_index_cache;
 mod text_log_level_cache;
 mod text_log_navigation;

@@ -11861,6 +11861,7 @@ dependencies = [
 name = "re_view_text_log"
 version = "0.41.0-alpha.1+dev"
 dependencies = [
+ "arrow",
  "egui",
  "egui_table",
  "itertools 0.15.0",

@@ -3,12 +3,15 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use egui::NumExt as _;
+use egui::containers::menu::MenuConfig;
 use re_data_ui::item_ui::{self, timeline_button};
-use re_dataframe_ui::{apply_table_style_fixes, cell_ui, header_ui};
+use re_dataframe_ui::{ColumnFilter, FilterState, apply_table_style_fixes, cell_ui, header_ui};
 use re_log::ResultExt as _;
 use re_log_types::{EntityPath, TimeInt, TimelineName};
 use re_sdk_types::blueprint::archetypes::{TextLogColumns, TextLogFormat, TextLogRows};
-use re_sdk_types::blueprint::components::{Enabled, TextLogColumn, TimelineColumn};
+use re_sdk_types::blueprint::components::{
+    Enabled, SqlFilterExpression, TextLogColumn, TimelineColumn,
+};
 use re_sdk_types::blueprint::encodings as bp_encodings;
 use re_sdk_types::components::TextLogLevel;
 use re_sdk_types::{View as _, ViewClassIdentifier, encodings};
@@ -23,6 +26,7 @@ use re_viewport_blueprint::ViewProperty;
 
 use crate::text_log_navigation::{TextLogNavigationController, TextLogScroll};
 
+use super::text_filter::{self, TextFilters};
 use super::visualizer_system::{TextLogEntries, TextLogSystem};
 
 #[derive(Clone, PartialEq, Eq, Default, re_byte_size::SizeBytes)]
@@ -210,6 +214,16 @@ Filter message types and toggle column visibility in a selection panel.",
             TextLogColumns::descriptor_timeline_columns().component,
         )?;
 
+        let rows_property = ViewProperty::from_archetype::<TextLogRows>(&view_ctx);
+        let saved_filters: Vec<String> = rows_property
+            .component_array_or_empty::<SqlFilterExpression>(
+                TextLogRows::descriptor_filters().component,
+            )?
+            .into_iter()
+            .map(|filter| filter.0.as_str().to_owned())
+            .collect();
+        let text_filters = TextFilters::from_sql(&saved_filters);
+
         state.navigation.observe(&output.navigation);
 
         egui::Frame {
@@ -218,6 +232,40 @@ Filter message types and toggle column visibility in a selection panel.",
         }
         .show(ui, |ui| {
             re_tracing::profile_scope!("render table");
+
+            // Same filter bar as the table view; the filters are saved as SQL in the blueprint.
+            let filter_state_id = ui.make_persistent_id(("text_log_filters", query.view_id));
+            let mut filter_state = FilterState::load(
+                ui.ctx(),
+                filter_state_id,
+                &saved_filters,
+                &text_filter::schema(),
+            );
+            let filter_errors = Arc::new(
+                text_filters
+                    .unsupported()
+                    .iter()
+                    .map(|sql| (sql.clone(), "Not supported by the text log view".to_owned()))
+                    .collect(),
+            );
+            let filter_bar = filter_state.filter_bar_ui(
+                ui,
+                ctx.app_options().timestamp_format,
+                &filter_errors,
+                None,
+                None,
+            );
+            if let Some(filters) = filter_bar.filters {
+                let filters: Vec<_> = filters
+                    .into_iter()
+                    .map(|sql| SqlFilterExpression(sql.into()))
+                    .collect();
+                rows_property.save_blueprint_component(
+                    ctx,
+                    &TextLogRows::descriptor_filters(),
+                    &filters,
+                );
+            }
 
             // The table state lives in egui memory keyed on the parent `Ui`, so it is lost whenever
             // the view gets re-hosted (e.g. maximized or moved to another container). Re-scroll then.
@@ -242,7 +290,10 @@ Filter message types and toggle column visibility in a selection panel.",
                 **monospace_body,
                 &output,
                 scroll_to_row,
+                &mut filter_state,
+                &text_filters,
             );
+            filter_state.store(ui.ctx(), filter_state_id);
 
             if state.navigation.rendered(&output.navigation, visible_rows) {
                 ui.ctx().request_repaint();
@@ -270,6 +321,8 @@ fn table_ui(
     monospace_body: bool,
     visualizer_output: &TextLogEntries,
     scroll_to_row: Option<(usize, egui::Align)>,
+    filter_state: &mut FilterState,
+    text_filters: &TextFilters,
 ) -> Option<Range<usize>> {
     let tokens = ui.tokens();
     let table_style = TableStyle::Dense;
@@ -327,6 +380,8 @@ fn table_ui(
         visualizer_output,
         num_rows,
         marker_row,
+        filter_state,
+        text_filters,
 
         // Going to be populated by the table delegate during the `prepare` phase.
         current_visible_rows: None,
@@ -368,6 +423,9 @@ struct TextLogTableDelegate<'a> {
     /// Paint the current time indicator at the top of this row
     /// (or at the bottom of the last row if this is one past the end).
     marker_row: Option<u64>,
+
+    filter_state: &'a mut FilterState,
+    text_filters: &'a TextFilters,
 }
 
 impl egui_table::TableDelegate for TextLogTableDelegate<'_> {
@@ -379,15 +437,34 @@ impl egui_table::TableDelegate for TextLogTableDelegate<'_> {
     fn header_cell_ui(&mut self, ui: &mut egui::Ui, cell: &egui_table::HeaderCellInfo) {
         let col_nr = cell.col_range.start;
         let is_last = col_nr + 1 == self.column_kinds.len();
-        header_ui(ui, self.table_style, is_last, |ui| {
-            match &self.column_kinds[col_nr] {
-                ColumnKind::Timeline(timeline) => {
+        let column_kind = match &self.column_kinds[col_nr] {
+            ColumnKind::Timeline(timeline) => {
+                header_ui(ui, self.table_style, is_last, |ui| {
                     timeline_button(&self.ctx.app_ctx, ui, timeline);
-                }
-                ColumnKind::Kind(kind) => {
-                    ui.strong(kind.name());
-                }
+                });
+                return;
             }
+            ColumnKind::Kind(kind) => *kind,
+        };
+
+        let response = header_ui(ui, self.table_style, is_last, |ui| {
+            egui::Sides::new().shrink_left().show(
+                ui,
+                |ui| ui.strong(column_kind.name()),
+                |ui| {
+                    egui::containers::menu::MenuButton::from_button(
+                        ui.small_icon_button_widget(&re_ui::icons::MORE, "More options"),
+                    )
+                    .config(MenuConfig::new().style(re_ui::menu::menu_style()))
+                    .ui(ui, |ui| column_menu_ui(ui, self.filter_state, column_kind));
+                },
+            );
+        })
+        .response;
+
+        // Also on right-click, since narrow columns may hide the "More options" button.
+        re_ui::menu::container_context_menu(&response, |ui| {
+            column_menu_ui(ui, self.filter_state, column_kind);
         });
     }
 
@@ -423,7 +500,19 @@ impl egui_table::TableDelegate for TextLogTableDelegate<'_> {
                 }
                 ColumnKind::Kind(bp_encodings::TextLogColumnKind::LogLevel) => {
                     if let Some(lvl) = &entry.level {
-                        ui.label(level_to_rich_text(ui, lvl));
+                        let mut text = level_to_rich_text(ui, lvl);
+                        if !self
+                            .text_filters
+                            .highlights(bp_encodings::TextLogColumnKind::LogLevel, lvl)
+                            .is_empty()
+                        {
+                            // Levels are short; highlight the whole level.
+                            let selection = ui.visuals().selection;
+                            text = text
+                                .background_color(selection.bg_fill)
+                                .color(selection.stroke.color);
+                        }
+                        ui.label(text);
                     } else {
                         ui.label("-");
                     }
@@ -436,18 +525,26 @@ impl egui_table::TableDelegate for TextLogTableDelegate<'_> {
                         None => (body, false),
                     };
 
-                    let mut text = if truncated {
-                        egui::RichText::new(format!("{first_line} …"))
+                    let highlights = self
+                        .text_filters
+                        .highlights(bp_encodings::TextLogColumnKind::Body, first_line);
+                    let shown = if truncated {
+                        format!("{first_line} …")
                     } else {
-                        egui::RichText::new(first_line)
+                        first_line.to_owned()
                     };
-
-                    if self.monospace_body {
-                        text = text.monospace();
-                    }
-                    if let Some(color) = entry.color {
-                        text = text.color(color);
-                    }
+                    let text_style = if self.monospace_body {
+                        egui::TextStyle::Monospace
+                    } else {
+                        egui::TextStyle::Body
+                    };
+                    let text = highlighted_text(
+                        ui,
+                        &shown,
+                        &highlights,
+                        entry.color.map(Into::into),
+                        &text_style,
+                    );
 
                     ui.label(text).on_hover_text(body);
                 }
@@ -482,6 +579,54 @@ impl egui_table::TableDelegate for TextLogTableDelegate<'_> {
     }
 }
 
+/// Contents of a column's "More options" menu.
+fn column_menu_ui(
+    ui: &mut egui::Ui,
+    filter_state: &mut FilterState,
+    column: bp_encodings::TextLogColumnKind,
+) {
+    if ui
+        .icon_and_text_menu_item(&re_ui::icons::FILTER, "Filter")
+        .clicked()
+        && let Some(filter) = ColumnFilter::default_for_column(text_filter::column_field(column))
+    {
+        // Adds the filter and opens its editor.
+        filter_state.push_new_filter(filter);
+    }
+}
+
+/// `text` with `highlights` (sorted byte ranges) marked like selected text, in the given style.
+fn highlighted_text(
+    ui: &egui::Ui,
+    text: &str,
+    highlights: &[std::ops::Range<usize>],
+    color: Option<egui::Color32>,
+    text_style: &egui::TextStyle,
+) -> egui::WidgetText {
+    let font_id = text_style.resolve(ui.style());
+    let plain = egui::TextFormat {
+        font_id: font_id.clone(),
+        color: color.unwrap_or(egui::Color32::PLACEHOLDER),
+        ..Default::default()
+    };
+    let selection = ui.visuals().selection;
+    let highlighted = egui::TextFormat {
+        font_id,
+        color: selection.stroke.color,
+        background: selection.bg_fill,
+        ..Default::default()
+    };
+    let mut job = egui::text::LayoutJob::default();
+    let mut current = 0;
+    for range in highlights {
+        job.append(&text[current..range.start], 0.0, plain.clone());
+        job.append(&text[range.clone()], 0.0, highlighted.clone());
+        current = range.end;
+    }
+    job.append(&text[current..], 0.0, plain);
+    job.into()
+}
+
 /// We need this to be a custom ui to be able to use the view state to get seen text log levels.
 ///
 /// This could potentially be avoided if we could add component ui's from this crate.
@@ -501,11 +646,12 @@ fn view_property_ui_rows(ctx: &ViewContext<'_>, ui: &mut egui::Ui) {
 
     let sub_prop_ui = |ui: &mut egui::Ui| {
         for field in &reflection.fields {
-            if field
+            let component = field
                 .component_descriptor(property.archetype_name)
-                .component
-                == TextLogRows::descriptor_filter_by_log_level().component
-            {
+                .component;
+            if component == TextLogRows::descriptor_filters().component {
+                // Edited with the filter bar in the view itself.
+            } else if component == TextLogRows::descriptor_filter_by_log_level().component {
                 re_view::view_property_component_ui_custom(
                     &query_ctx,
                     ui,

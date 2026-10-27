@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "../../blueprint/components/sql_filter_expression.hpp"
 #include "../../collection.hpp"
 #include "../../component_batch.hpp"
 #include "../../component_column.hpp"
@@ -25,6 +26,13 @@ namespace rerun::blueprint::archetypes {
         /// Defaults to showing all logged levels.
         std::optional<ComponentBatch> filter_by_log_level;
 
+        /// Filters on the text log columns, all of which a row must pass to be shown.
+        ///
+        /// SQL boolean expressions over the `"Entity path"`, `"Level"`, and `"Body"` columns,
+        /// in the same form the table view uses, e.g. `"Body" ILIKE '%timeout%'`.
+        /// Defaults to no filters.
+        std::optional<ComponentBatch> filters;
+
       public:
         /// The name of the archetype as used in `ComponentDescriptor`s.
         static constexpr const char ArchetypeName[] = "rerun.blueprint.archetypes.TextLogRows";
@@ -33,6 +41,11 @@ namespace rerun::blueprint::archetypes {
         static constexpr auto Descriptor_filter_by_log_level = ComponentDescriptor(
             ArchetypeName, "TextLogRows:filter_by_log_level",
             Loggable<rerun::components::TextLogLevel>::ComponentType
+        );
+        /// `ComponentDescriptor` for the `filters` field.
+        static constexpr auto Descriptor_filters = ComponentDescriptor(
+            ArchetypeName, "TextLogRows:filters",
+            Loggable<rerun::blueprint::components::SqlFilterExpression>::ComponentType
         );
 
       public:
@@ -59,6 +72,18 @@ namespace rerun::blueprint::archetypes {
             filter_by_log_level =
                 ComponentBatch::from_loggable(_filter_by_log_level, Descriptor_filter_by_log_level)
                     .value_or_throw();
+            return std::move(*this);
+        }
+
+        /// Filters on the text log columns, all of which a row must pass to be shown.
+        ///
+        /// SQL boolean expressions over the `"Entity path"`, `"Level"`, and `"Body"` columns,
+        /// in the same form the table view uses, e.g. `"Body" ILIKE '%timeout%'`.
+        /// Defaults to no filters.
+        TextLogRows with_filters(
+            const Collection<rerun::blueprint::components::SqlFilterExpression>& _filters
+        ) && {
+            filters = ComponentBatch::from_loggable(_filters, Descriptor_filters).value_or_throw();
             return std::move(*this);
         }
 

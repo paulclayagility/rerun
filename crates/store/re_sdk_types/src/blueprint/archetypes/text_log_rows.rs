@@ -33,6 +33,13 @@ pub struct TextLogRows {
     ///
     /// Defaults to showing all logged levels.
     pub filter_by_log_level: Option<SerializedComponentBatch>,
+
+    /// Filters on the text log columns, all of which a row must pass to be shown.
+    ///
+    /// SQL boolean expressions over the `"Entity path"`, `"Level"`, and `"Body"` columns,
+    /// in the same form the table view uses, e.g. `"Body" ILIKE '%timeout%'`.
+    /// Defaults to no filters.
+    pub filters: Option<SerializedComponentBatch>,
 }
 
 impl TextLogRows {
@@ -49,6 +56,20 @@ impl TextLogRows {
             });
         (*DESCRIPTOR).clone()
     }
+
+    /// Returns the [`ComponentDescriptor`] for [`Self::filters`].
+    ///
+    /// The corresponding component is [`crate::blueprint::components::SqlFilterExpression`].
+    #[inline]
+    pub fn descriptor_filters() -> ComponentDescriptor {
+        static DESCRIPTOR: std::sync::LazyLock<ComponentDescriptor> =
+            std::sync::LazyLock::new(|| ComponentDescriptor {
+                archetype: Some("rerun.blueprint.archetypes.TextLogRows".into()),
+                component: "TextLogRows:filters".into(),
+                component_type: Some("rerun.blueprint.components.SqlFilterExpression".into()),
+            });
+        (*DESCRIPTOR).clone()
+    }
 }
 
 static REQUIRED_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 0usize]> =
@@ -57,15 +78,25 @@ static REQUIRED_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 0usize]> =
 static RECOMMENDED_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 0usize]> =
     std::sync::LazyLock::new(|| []);
 
-static OPTIONAL_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 1usize]> =
-    std::sync::LazyLock::new(|| [TextLogRows::descriptor_filter_by_log_level()]);
+static OPTIONAL_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 2usize]> =
+    std::sync::LazyLock::new(|| {
+        [
+            TextLogRows::descriptor_filter_by_log_level(),
+            TextLogRows::descriptor_filters(),
+        ]
+    });
 
-static ALL_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 1usize]> =
-    std::sync::LazyLock::new(|| [TextLogRows::descriptor_filter_by_log_level()]);
+static ALL_COMPONENTS: std::sync::LazyLock<[ComponentDescriptor; 2usize]> =
+    std::sync::LazyLock::new(|| {
+        [
+            TextLogRows::descriptor_filter_by_log_level(),
+            TextLogRows::descriptor_filters(),
+        ]
+    });
 
 impl TextLogRows {
-    /// The total number of components in the archetype: 0 required, 0 recommended, 1 optional
-    pub const NUM_COMPONENTS: usize = 1usize;
+    /// The total number of components in the archetype: 0 required, 0 recommended, 2 optional
+    pub const NUM_COMPONENTS: usize = 2usize;
 }
 
 impl ::re_types_core::Archetype for TextLogRows {
@@ -116,8 +147,12 @@ impl ::re_types_core::Archetype for TextLogRows {
             .map(|array| {
                 SerializedComponentBatch::new(array.clone(), Self::descriptor_filter_by_log_level())
             });
+        let filters = arrays_by_descr
+            .get(&Self::descriptor_filters())
+            .map(|array| SerializedComponentBatch::new(array.clone(), Self::descriptor_filters()));
         Ok(Self {
             filter_by_log_level,
+            filters,
         })
     }
 }
@@ -126,7 +161,8 @@ impl ::re_types_core::AsComponents for TextLogRows {
     #[inline]
     fn as_serialized_batches(&self) -> Vec<SerializedComponentBatch> {
         use ::re_types_core::Archetype as _;
-        std::iter::once(self.filter_by_log_level.clone())
+        [self.filter_by_log_level.clone(), self.filters.clone()]
+            .into_iter()
             .flatten()
             .collect()
     }
@@ -140,6 +176,7 @@ impl TextLogRows {
     pub fn new() -> Self {
         Self {
             filter_by_log_level: None,
+            filters: None,
         }
     }
 
@@ -158,6 +195,10 @@ impl TextLogRows {
                 crate::components::TextLogLevel::arrow_empty(),
                 Self::descriptor_filter_by_log_level(),
             )),
+            filters: Some(SerializedComponentBatch::new(
+                crate::blueprint::components::SqlFilterExpression::arrow_empty(),
+                Self::descriptor_filters(),
+            )),
         }
     }
 
@@ -171,6 +212,20 @@ impl TextLogRows {
     ) -> Self {
         self.filter_by_log_level =
             try_serialize_field(Self::descriptor_filter_by_log_level(), filter_by_log_level);
+        self
+    }
+
+    /// Filters on the text log columns, all of which a row must pass to be shown.
+    ///
+    /// SQL boolean expressions over the `"Entity path"`, `"Level"`, and `"Body"` columns,
+    /// in the same form the table view uses, e.g. `"Body" ILIKE '%timeout%'`.
+    /// Defaults to no filters.
+    #[inline]
+    pub fn with_filters(
+        mut self,
+        filters: impl IntoIterator<Item = impl Into<crate::blueprint::components::SqlFilterExpression>>,
+    ) -> Self {
+        self.filters = try_serialize_field(Self::descriptor_filters(), filters);
         self
     }
 }

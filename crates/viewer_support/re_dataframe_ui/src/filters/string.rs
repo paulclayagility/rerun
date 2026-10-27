@@ -38,9 +38,21 @@ pub struct StringFilter {
     query: String,
 }
 
+/// Operators that keep matches and ones that remove them are told apart by color.
+impl SyntaxHighlighting for StringOperator {
+    fn syntax_highlight_into(&self, builder: &mut SyntaxHighlightedBuilder) {
+        let text = self.to_string();
+        match self {
+            Self::Contains => builder.append_keyword_include(&text),
+            Self::DoesNotContain => builder.append_keyword_exclude(&text),
+            Self::StartsWith | Self::EndsWith => builder.append_keyword(&text),
+        };
+    }
+}
+
 impl SyntaxHighlighting for StringFilter {
     fn syntax_highlight_into(&self, builder: &mut SyntaxHighlightedBuilder) {
-        builder.append_keyword(&self.operator.to_string());
+        builder.append(&self.operator);
         builder.append_keyword(" ");
         builder.append_string_value(&self.query);
     }
@@ -52,6 +64,14 @@ impl StringFilter {
             operator,
             query: query.into(),
         }
+    }
+
+    pub fn operator(&self) -> StringOperator {
+        self.operator
+    }
+
+    pub fn query(&self) -> &str {
+        &self.query
     }
 
     /// Parse the SQL written by `Filter::to_sql`.
@@ -162,8 +182,6 @@ impl Filter for StringFilter {
         column_name: &str,
         popup_just_opened: bool,
     ) -> FilterUiAction {
-        let operator_text = self.operator.to_string();
-
         ui.horizontal(|ui| {
             ui.label(
                 SyntaxHighlightedBuilder::body_default(column_name).into_widget_text(ui.style()),
@@ -171,13 +189,16 @@ impl Filter for StringFilter {
 
             egui::ComboBox::new("string_op", "")
                 .selected_text(
-                    SyntaxHighlightedBuilder::keyword(&operator_text).into_widget_text(ui.style()),
+                    SyntaxHighlightedBuilder::new()
+                        .with(&self.operator)
+                        .into_widget_text(ui.style()),
                 )
                 .show_ui(ui, |ui| {
                     for possible_op in StringOperator::VARIANTS {
                         if ui
                             .button(
-                                SyntaxHighlightedBuilder::keyword(&possible_op.to_string())
+                                SyntaxHighlightedBuilder::new()
+                                    .with(possible_op)
                                     .into_widget_text(ui.style()),
                             )
                             .clicked()

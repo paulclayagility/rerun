@@ -6,6 +6,7 @@ use re_chunk_store::{AbsoluteTimeRange, RangeQuery};
 use re_log_types::{EntityPath, TimeInt, TimePoint, TimelineName};
 use re_sdk_types::archetypes::TextLog;
 use re_sdk_types::blueprint::archetypes::TextLogRows;
+use re_sdk_types::blueprint::components::SqlFilterExpression;
 use re_sdk_types::components::{Color, Text, TextLogLevel};
 use re_sdk_types::{Archetype as _, ArrowString, ComponentIdentifier};
 use re_view::{BlueprintResolvedResults, VisualizerInstructionQueryResults};
@@ -16,6 +17,7 @@ use re_viewer_context::{
 };
 use re_viewport_blueprint::ViewProperty;
 
+use crate::text_filter::TextFilters;
 use crate::text_log_index_cache::{IndexedRow, TextLogIndex, TextLogIndexCache, TextLogQueryKey};
 use crate::text_log_level_cache::TextLogLevelCache;
 use crate::text_log_navigation::TextLogNavigation;
@@ -196,7 +198,8 @@ impl VisualizerSystem for TextLogSystem {
         let output = VisualizerExecutionOutput::default();
         // Absence means unfiltered. The UI fallback only lists discovered labels, which may
         // be incomplete during progressive discovery and must not restrict further discovery.
-        let filter = ViewProperty::from_archetype::<TextLogRows>(ctx)
+        let rows_property = ViewProperty::from_archetype::<TextLogRows>(ctx);
+        let filter = rows_property
             .component_array::<TextLogLevel>(
                 TextLogRows::descriptor_filter_by_log_level().component,
             )?
@@ -206,6 +209,13 @@ impl VisualizerSystem for TextLogSystem {
                     .map(|lvl| lvl.0.0.clone())
                     .collect::<BTreeSet<_>>()
             });
+        let text_filters: Vec<String> = rows_property
+            .component_array_or_empty::<SqlFilterExpression>(
+                TextLogRows::descriptor_filters().component,
+            )?
+            .into_iter()
+            .map(|filter| filter.0.as_str().to_owned())
+            .collect();
 
         let sources: Vec<_> = view_query
             .iter_visualizer_instruction_for(Self::identifier())
@@ -215,8 +225,14 @@ impl VisualizerSystem for TextLogSystem {
                 timeline: view_query.timeline,
             })
             .collect();
-        let entries =
-            Self::execute_progressive(ctx, view_query, &sources, filter.as_ref(), &output)?;
+        let entries = Self::execute_progressive(
+            ctx,
+            view_query,
+            &sources,
+            filter.as_ref(),
+            &text_filters,
+            &output,
+        )?;
 
         Ok(output.with_visualizer_data(Arc::new(entries)))
     }
@@ -228,10 +244,11 @@ impl TextLogSystem {
         view_query: &ViewQuery<'_>,
         sources: &[TextLogSource<'_>],
         filter: Option<&BTreeSet<ArrowString>>,
+        text_filters: &[String],
         output: &VisualizerExecutionOutput,
     ) -> Result<TextLogEntries, ViewSystemExecutionError> {
         // Identify the shared navigation index: views with the same timeline, filter and instruction mappings reuse one index.
-        let key = TextLogQueryKey::new(view_query.timeline, filter, sources);
+        let key = TextLogQueryKey::new(view_query.timeline, filter, text_filters, sources);
         let source_keys: Vec<_> = sources
             .iter()
             .map(|source| TextLogSourceKey {
@@ -278,6 +295,7 @@ impl TextLogSystem {
         if let Some((span_id, range)) = plan.next_span {
             let mut all_chunks_loaded = true;
             let mut exact_index = TextLogIndex::default();
+            let text_filters = TextFilters::from_sql(text_filters);
             for (source_id, (source, source_key)) in
                 std::iter::zip(sources, &source_keys).enumerate()
             {
@@ -306,6 +324,8 @@ impl TextLogSystem {
                     source_id,
                     view_query.timeline,
                     filter,
+                    &text_filters,
+                    &source.data_result.entity_path.to_string(),
                     texts.chunks(),
                     levels.chunks(),
                     &mut discovered_levels,
@@ -341,7 +361,7 @@ impl TextLogSystem {
             &mut discovered_levels,
         );
         // Level-filter choices accumulate across frames, since each frame only sees part of the data.
-        let level_key = TextLogQueryKey::new(view_query.timeline, None, sources);
+        let level_key = TextLogQueryKey::new(view_query.timeline, None, &[], sources);
         entries.levels = ctx
             .viewer_ctx
             .store_context

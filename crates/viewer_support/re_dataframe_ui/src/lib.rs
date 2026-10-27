@@ -21,9 +21,9 @@ pub use self::display_record_batch::{DisplayRecordBatch, DisplayRecordBatchError
 // for testing purposes
 pub use self::column_sorting::{SortBy, SortDirection};
 pub use self::filters::{
-    ColumnFilter, ComparisonOperator, FloatFilter, IntFilter, NonNullableBooleanFilter,
-    Nullability, NullableBooleanFilter, StringFilter, StringOperator, TimestampFilter, TypedFilter,
-    parse_sql_expr,
+    ColumnFilter, ComparisonOperator, FilterState, FloatFilter, IntFilter,
+    NonNullableBooleanFilter, Nullability, NullableBooleanFilter, StringFilter, StringOperator,
+    TableFilter, TimestampFilter, TypedFilter, parse_sql_expr,
 };
 pub use self::header_tooltip::column_header_tooltip_ui;
 pub use self::re_table_utils::{

@@ -192,6 +192,22 @@ impl SyntaxHighlightedBuilder {
     );
 
     impl_style_fns!(
+        "A filter operator that keeps what matches, like `contains`",
+        keyword_include,
+        with_keyword_include,
+        append_keyword_include,
+        KeywordInclude
+    );
+
+    impl_style_fns!(
+        "A filter operator that removes what matches, like `does not contain`",
+        keyword_exclude,
+        with_keyword_exclude,
+        append_keyword_exclude,
+        KeywordExclude
+    );
+
+    impl_style_fns!(
         "An index number, e.g. an array index.",
         index,
         with_index,
@@ -278,6 +294,8 @@ enum SyntaxHighlightedStyle {
     StringValue,
     Identifier,
     Keyword,
+    KeywordInclude,
+    KeywordExclude,
     Index,
     Null,
     Primitive,
@@ -293,6 +311,8 @@ impl std::fmt::Debug for SyntaxHighlightedStyle {
             Self::StringValue => write!(f, "StringValue"),
             Self::Identifier => write!(f, "Identifier"),
             Self::Keyword => write!(f, "Keyword"),
+            Self::KeywordInclude => write!(f, "KeywordInclude"),
+            Self::KeywordExclude => write!(f, "KeywordExclude"),
             Self::Index => write!(f, "Index"),
             Self::Null => write!(f, "Null"),
             Self::Primitive => write!(f, "Primitive"),
@@ -340,6 +360,8 @@ impl SyntaxHighlightedStyle {
             Self::Identifier => Self::monospace_with_color(style, style.tokens().text_default),
             // TODO(lucas): Find a better way to deal with body / monospace style
             Self::Keyword => Self::body_with_color(style, style.tokens().code_keyword_color),
+            Self::KeywordInclude => Self::body_with_color(style, style.tokens().success_text_color),
+            Self::KeywordExclude => Self::body_with_color(style, style.visuals.error_fg_color),
             Self::Index => Self::monospace_with_color(style, style.tokens().code_index_color),
             Self::Null => Self::monospace_with_color(style, style.tokens().code_null_color),
             Self::Primitive => {

@@ -10,6 +10,7 @@ use re_view::ChunksWithComponent;
 use re_viewer_context::external::re_entity_db::EntityDb;
 use re_viewer_context::{Cache, ViewId};
 
+use crate::text_filter::TextFilters;
 use crate::text_log_level_cache::collect_levels;
 use crate::text_log_query::text_levels;
 use crate::text_log_source::TextLogSourceKey;
@@ -26,6 +27,7 @@ impl TextLogQueryKey {
     pub fn new(
         timeline: TimelineName,
         filter: Option<&BTreeSet<ArrowString>>,
+        text_filters: &[String],
         sources: &[TextLogSource<'_>],
     ) -> Self {
         use std::hash::{BuildHasher as _, Hash as _, Hasher as _};
@@ -33,6 +35,7 @@ impl TextLogQueryKey {
         let mut hasher = re_log_types::hash::HASH_RANDOM_STATE.build_hasher();
         std::hash::Hash::hash(&timeline, &mut hasher);
         filter.hash(&mut hasher);
+        text_filters.hash(&mut hasher);
 
         for source in sources {
             let instruction = source.instruction;
@@ -59,13 +62,13 @@ impl TextLogQueryKey {
     }
 }
 
-/// Cached ordering of text instances passing the level filter.
+/// Cached ordering of text instances passing the level and text filters.
 ///
 /// Covers one resolved span of the progressive navigation layout.
 /// Row identities do not depend on chunk boundaries or display-only components.
 #[derive(Default, re_byte_size::SizeBytes)]
 pub struct TextLogIndex {
-    /// Rows passing the level filter, sorted by time on the query timeline.
+    /// Rows passing the level and text filters, sorted by time on the query timeline.
     pub rows: Vec<IndexedRow>,
 }
 
@@ -92,13 +95,15 @@ impl TextLogIndex {
         source: usize,
         timeline: TimelineName,
         filter: Option<&BTreeSet<ArrowString>>,
+        text_filters: &TextFilters,
+        entity_path: &str,
         texts: &ChunksWithComponent<'_>,
         levels: &ChunksWithComponent<'_>,
         discovered: &mut BTreeSet<String>,
     ) {
         re_tracing::profile_function!();
 
-        for row in text_levels(timeline, texts, levels) {
+        for row in text_levels(timeline, texts, levels, !text_filters.is_empty()) {
             collect_levels(discovered, row.num_instances, row.levels.as_deref());
             for instance in 0..row.num_instances {
                 let level = row
@@ -107,6 +112,15 @@ impl TextLogIndex {
                     .and_then(|levels| levels.get(instance.min(levels.len().saturating_sub(1))));
                 if let Some(level) = level
                     && filter.is_some_and(|filter| !filter.contains(level))
+                {
+                    continue;
+                }
+                if let Some(bodies) = &row.bodies
+                    && !text_filters.matches(
+                        entity_path,
+                        level.map(ArrowString::as_str),
+                        bodies.get(instance).map_or("", ArrowString::as_str),
+                    )
                 {
                     continue;
                 }
@@ -546,6 +560,8 @@ mod tests {
             source,
             TimelineName::log_tick(),
             None,
+            &TextFilters::default(),
+            "",
             &texts,
             &levels,
             &mut BTreeSet::new(),

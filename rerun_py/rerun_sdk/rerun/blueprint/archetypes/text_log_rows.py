@@ -14,6 +14,7 @@ from ..._baseclasses import (
     Archetype,
     ComponentDescriptor,
 )
+from ...blueprint import components as blueprint_components
 from ...error_utils import catch_and_log_exceptions
 
 __all__ = ["TextLogRows"]
@@ -29,7 +30,12 @@ class TextLogRows(Archetype):
 
     NAME: ClassVar[str] = "rerun.blueprint.archetypes.TextLogRows"
 
-    def __init__(self: Any, *, filter_by_log_level: encodings.Utf8ArrayLike | None = None) -> None:
+    def __init__(
+        self: Any,
+        *,
+        filter_by_log_level: encodings.Utf8ArrayLike | None = None,
+        filters: encodings.Utf8ArrayLike | None = None,
+    ) -> None:
         """
         Create a new instance of the TextLogRows archetype.
 
@@ -39,12 +45,18 @@ class TextLogRows(Archetype):
             Log levels to display.
 
             Defaults to showing all logged levels.
+        filters:
+            Filters on the text log columns, all of which a row must pass to be shown.
+
+            SQL boolean expressions over the `"Entity path"`, `"Level"`, and `"Body"` columns,
+            in the same form the table view uses, e.g. `"Body" ILIKE '%timeout%'`.
+            Defaults to no filters.
 
         """
 
         # You can define your own __init__ function as a member of TextLogRowsExt in text_log_rows_ext.py
         with catch_and_log_exceptions(context=self.__class__.__name__):
-            self.__attrs_init__(filter_by_log_level=filter_by_log_level)
+            self.__attrs_init__(filter_by_log_level=filter_by_log_level, filters=filters)
             return
         self.__attrs_clear__()
 
@@ -52,6 +64,7 @@ class TextLogRows(Archetype):
         """Convenience method for calling `__attrs_init__` with all `None`s."""
         self.__attrs_init__(
             filter_by_log_level=None,
+            filters=None,
         )
 
     @classmethod
@@ -67,6 +80,7 @@ class TextLogRows(Archetype):
         *,
         clear_unset: bool = False,
         filter_by_log_level: encodings.Utf8ArrayLike | None = None,
+        filters: encodings.Utf8ArrayLike | None = None,
     ) -> TextLogRows:
         """
         Update only some specific fields of a `TextLogRows`.
@@ -79,6 +93,12 @@ class TextLogRows(Archetype):
             Log levels to display.
 
             Defaults to showing all logged levels.
+        filters:
+            Filters on the text log columns, all of which a row must pass to be shown.
+
+            SQL boolean expressions over the `"Entity path"`, `"Level"`, and `"Body"` columns,
+            in the same form the table view uses, e.g. `"Body" ILIKE '%timeout%'`.
+            Defaults to no filters.
 
         """
 
@@ -86,6 +106,7 @@ class TextLogRows(Archetype):
         with catch_and_log_exceptions(context=cls.__name__):
             kwargs: dict[str, Any] = {
                 "filter_by_log_level": filter_by_log_level,
+                "filters": filters,
             }
 
             if clear_unset:
@@ -110,6 +131,14 @@ class TextLogRows(Archetype):
             component_type=components.TextLogLevelBatch._COMPONENT_TYPE,
         )
 
+    @staticmethod
+    def descriptor_filters() -> ComponentDescriptor:
+        return ComponentDescriptor(
+            "TextLogRows:filters",
+            archetype=TextLogRows.NAME,
+            component_type=blueprint_components.SqlFilterExpressionBatch._COMPONENT_TYPE,
+        )
+
     filter_by_log_level: components.TextLogLevelBatch | None = field(
         metadata={"component": True},
         default=None,
@@ -118,6 +147,19 @@ class TextLogRows(Archetype):
     # Log levels to display.
     #
     # Defaults to showing all logged levels.
+    #
+    # (Docstring intentionally commented out to hide this field from the docs)
+
+    filters: blueprint_components.SqlFilterExpressionBatch | None = field(
+        metadata={"component": True},
+        default=None,
+        converter=blueprint_components.SqlFilterExpressionBatch._converter,  # type: ignore[misc]
+    )
+    # Filters on the text log columns, all of which a row must pass to be shown.
+    #
+    # SQL boolean expressions over the `"Entity path"`, `"Level"`, and `"Body"` columns,
+    # in the same form the table view uses, e.g. `"Body" ILIKE '%timeout%'`.
+    # Defaults to no filters.
     #
     # (Docstring intentionally commented out to hide this field from the docs)
 

@@ -6041,13 +6041,22 @@ fn generate_archetype_reflection() -> ArchetypeReflectionMap {
                 display_name: "Text log rows",
                 deprecation_summary: None,
                 scope: Some("blueprint"),
-                fields: vec![ArchetypeFieldReflection {
-                    name: "filter_by_log_level",
-                    display_name: "Filter by log level",
-                    component_type: "rerun.components.TextLogLevel".into(),
-                    docstring_md: "Log levels to display.\n\nDefaults to showing all logged levels.",
-                    flags: ArchetypeFieldFlags::UI_EDITABLE,
-                }],
+                fields: vec![
+                    ArchetypeFieldReflection {
+                        name: "filter_by_log_level",
+                        display_name: "Filter by log level",
+                        component_type: "rerun.components.TextLogLevel".into(),
+                        docstring_md: "Log levels to display.\n\nDefaults to showing all logged levels.",
+                        flags: ArchetypeFieldFlags::UI_EDITABLE,
+                    },
+                    ArchetypeFieldReflection {
+                        name: "filters",
+                        display_name: "Filters",
+                        component_type: "rerun.blueprint.components.SqlFilterExpression".into(),
+                        docstring_md: "Filters on the text log columns, all of which a row must pass to be shown.\n\nSQL boolean expressions over the `\"Entity path\"`, `\"Level\"`, and `\"Body\"` columns,\nin the same form the table view uses, e.g. `\"Body\" ILIKE '%timeout%'`.\nDefaults to no filters.",
+                        flags: ArchetypeFieldFlags::UI_EDITABLE,
+                    },
+                ],
             },
         ),
         (

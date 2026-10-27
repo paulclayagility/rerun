@@ -11,4 +11,12 @@ pub struct TextLogRows {
     /// Defaults to showing all logged levels.
     #[rerun(optional)]
     pub filter_by_log_level: Option<Vec<rerun::components::TextLogLevel>>,
+
+    /// Filters on the text log columns, all of which a row must pass to be shown.
+    ///
+    /// SQL boolean expressions over the `"Entity path"`, `"Level"`, and `"Body"` columns,
+    /// in the same form the table view uses, e.g. `"Body" ILIKE '%timeout%'`.
+    /// Defaults to no filters.
+    #[rerun(optional)]
+    pub filters: Option<Vec<rerun::blueprint::components::SqlFilterExpression>>,
 }

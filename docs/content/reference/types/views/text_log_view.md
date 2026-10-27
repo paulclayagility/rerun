@@ -15,6 +15,9 @@ The columns to display in the view.
 * `text_log_columns`: All columns to be displayed.
 ### `rows`
 Filter for rows to display in the view.
+
+* `filter_by_log_level`: Log levels to display.
+* `filters`: Filters on the text log columns, all of which a row must pass to be shown.
 ### `format_options`
 Formatting options for the text log view.
 
